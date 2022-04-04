@@ -17,29 +17,26 @@ public class ParallelClusterClient : ClusterClientBase
 
 	public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
 	{
-		var requestTasks = new List<Task<Task<string>>>();
+		var requestTasks = new List<Task<string>>();
 		foreach (var address in ReplicaAddresses)
 		{
 		    var webRequest = CreateRequest(address + "?query=" + query);
-		    requestTasks.Add(Task.WhenAny(ProcessRequestAsync(webRequest), Task.Delay(timeout).ContinueWith(_ => default(string))));
+		    requestTasks.Add(ProcessRequestAsync(webRequest));
 		}
 		
 		var delayTask = Task.Delay(timeout).ContinueWith(_ => default(string));
-		while (requestTasks.Count > 0)
+		requestTasks.Add(delayTask);
+		while (requestTasks.Count > 1)
 		{
 			 var completedTask = await Task.WhenAny(requestTasks);
 			 if (delayTask.IsCompleted) throw new TimeoutException();
-			 if (completedTask.IsCompleted)
+			 if (completedTask.IsFaulted)
 			 {
-				 var resultTask = completedTask.Result;
-				 if (resultTask.IsFaulted)
-				 {
-					 requestTasks.Remove(completedTask);
-					 continue;
-				 }
-				 return resultTask.Result;	 
+				 requestTasks.Remove(completedTask);
+				 continue;
 			 }
-			 requestTasks.Remove(completedTask);
+
+			 return completedTask.Result;
 		}
 
 		throw new TimeoutException();
