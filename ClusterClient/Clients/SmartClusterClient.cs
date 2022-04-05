@@ -16,8 +16,7 @@ public class SmartClusterClient : ClusterClientBase
 
 	public SmartClusterClient(string[] replicaAddresses)
 		: base(replicaAddresses)
-	{
-	}
+	{ }
 
 	public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
 	{
@@ -30,48 +29,33 @@ public class SmartClusterClient : ClusterClientBase
 		{
 			var sw = new Stopwatch();
 			sw.Start();
-			var timeoutTask = Task.Delay(taskAverageTimeout).ContinueWith(_ => SmallTimeout);
-			workingTasks.Add(timeoutTask);
+			var addressTimeoutTask = Task.Delay(taskAverageTimeout).ContinueWith(_ => SmallTimeout);
+			workingTasks.Add(addressTimeoutTask);
 			var webRequest = CreateRequest(address + "?query=" + query);
 			var requestTask = ProcessRequestAsync(webRequest);
 			workingTasks.Add(requestTask);
 
 			var firstCompletedTask = await Task.WhenAny(workingTasks);
-			if (timeoutTask.IsCompleted)
+			workingTasks.Remove(firstCompletedTask);
+			if (addressTimeoutTask.IsCompleted) continue;
+			if (requestTask.IsFaulted)
 			{
-				workingTasks.Remove(timeoutTask);
+				badAddresses.Add(address);
+				timeout -= TimeSpan.FromMilliseconds(sw.ElapsedMilliseconds);
+				taskAverageTimeout = timeout / (ReplicaAddresses.Length - badAddresses.Count);
 				continue;
 			}
-			if (firstCompletedTask.IsFaulted)
-			{
-				if (requestTask.IsFaulted)
-				{
-					workingTasks.Remove(requestTask);
-					timeout -= TimeSpan.FromMilliseconds(sw.ElapsedMilliseconds);
-					badAddresses.Add(address);
-					taskAverageTimeout = timeout / (ReplicaAddresses.Length - badAddresses.Count);
-					continue;
-				}
-
-				workingTasks.Remove(firstCompletedTask);
-				continue;
-			}
-
-			if (firstCompletedTask.Result == SmallTimeout) continue;
+			if (firstCompletedTask.IsFaulted || firstCompletedTask.Result == SmallTimeout) continue;
 			return firstCompletedTask.Result;
 		}
 
 		workingTasks.Add(commonTimeout);
-		while (true)
+		while (workingTasks.Count > 1)
 		{
 			var completedTask = await Task.WhenAny(workingTasks);
-			if (completedTask.IsFaulted || completedTask.Result == SmallTimeout)
-			{
-				workingTasks.Remove(completedTask);
-				continue;
-			}
-			if (completedTask.Result == BigTimeout)
-				break;
+			workingTasks.Remove(completedTask);
+			if (completedTask.IsFaulted || completedTask.Result == SmallTimeout) continue;
+			if (completedTask.Result == BigTimeout) break;
 			return completedTask.Result;
 		}
 		throw new TimeoutException();

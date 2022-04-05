@@ -29,7 +29,7 @@ public class ParallelClusterClient : ClusterClientBase
 		while (requestTasks.Count > 1)
 		{
 			 var completedTask = await Task.WhenAny(requestTasks);
-			 if (delayTask.IsCompleted) throw new TimeoutException();
+			 if (delayTask.IsCompleted) break;
 			 if (completedTask.IsFaulted)
 			 {
 				 requestTasks.Remove(completedTask);

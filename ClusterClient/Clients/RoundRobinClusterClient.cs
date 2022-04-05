@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
+using System.Linq;
 using System.Threading.Tasks;
 using ClusterClient.Clients;
 using log4net;
@@ -9,9 +10,15 @@ namespace ClusterTests;
 
 public class RoundRobinClusterClient : ClusterClientBase
 {
+	// private readonly HashSet<string> badAddresses;
+	// private readonly HashSet<string> slowAddresses;
+
 	public RoundRobinClusterClient(string[] replicaAddresses)
 		: base(replicaAddresses)
-	{ }
+	{
+		// badAddresses = new HashSet<string>();
+		// slowAddresses = new HashSet<string>();
+	}
 
 	public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
 	{
@@ -19,39 +26,35 @@ public class RoundRobinClusterClient : ClusterClientBase
 		var slowAddresses = new HashSet<string>();
 		var commonTimeout = Task.Delay(timeout);
 		var taskAverageTimeout = timeout / (ReplicaAddresses.Length - badAddresses.Count);
+		
 		while (!commonTimeout.IsCompleted)
 		{
-			if (badAddresses.Count == ReplicaAddresses.Length)
-				throw new Exception("All replicas are bad");
-
+			if (badAddresses.Count == ReplicaAddresses.Length) throw new Exception();
+			if (slowAddresses.Count == ReplicaAddresses.Length) throw new TimeoutException();
 			foreach (var address in ReplicaAddresses)
 			{
-				if (badAddresses.Contains(address))
-					continue;
+				if (badAddresses.Contains(address)) continue;
 				var sw = new Stopwatch();
+				
 				sw.Start();
-				var timeoutTask = Task.Delay(taskAverageTimeout);
+				var addressTimeoutTask = Task.Delay(taskAverageTimeout);
 				var webRequest = CreateRequest(address + "?query=" + query);
 				var requestTask = ProcessRequestAsync(webRequest);
-				
-				await Task.WhenAny(requestTask, timeoutTask);
+				await Task.WhenAny(requestTask, addressTimeoutTask);
 				sw.Stop();
-				if (!requestTask.IsCompleted)
+				
+				if (requestTask.IsCompletedSuccessfully)
+					return requestTask.Result;
+				if (addressTimeoutTask.IsCompleted)
 				{
 					slowAddresses.Add(address);
 					continue;
 				}
-
-				if (!requestTask.IsFaulted)
-					return requestTask.Result;
 				
-				timeout -= TimeSpan.FromMilliseconds(sw.ElapsedMilliseconds);
 				badAddresses.Add(address);
+				timeout -= TimeSpan.FromMilliseconds(sw.ElapsedMilliseconds);
 				taskAverageTimeout = timeout / (ReplicaAddresses.Length - badAddresses.Count);
 			}
-
-			if (slowAddresses.Count == ReplicaAddresses.Length)
-				throw new TimeoutException();
 		}
 		throw new TimeoutException();
 	}
