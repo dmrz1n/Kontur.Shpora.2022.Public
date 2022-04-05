@@ -10,15 +10,9 @@ namespace ClusterTests;
 
 public class RoundRobinClusterClient : ClusterClientBase
 {
-	// private readonly HashSet<string> badAddresses;
-	// private readonly HashSet<string> slowAddresses;
-
 	public RoundRobinClusterClient(string[] replicaAddresses)
 		: base(replicaAddresses)
-	{
-		// badAddresses = new HashSet<string>();
-		// slowAddresses = new HashSet<string>();
-	}
+	{ }
 
 	public override async Task<string> ProcessRequestAsync(string query, TimeSpan timeout)
 	{
